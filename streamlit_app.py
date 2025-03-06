@@ -1,56 +1,73 @@
 import streamlit as st
 from openai import OpenAI
+import requests
 
-# Show title and description.
-st.title("💬 Chatbot")
+# Function to fetch supporting articles using a web search
+def get_supporting_articles(query):
+    search_url = f"https://www.googleapis.com/customsearch/v1?q={query}&key=YOUR_GOOGLE_API_KEY&cx=YOUR_SEARCH_ENGINE_ID"
+    response = requests.get(search_url)
+    results = response.json().get("items", [])
+    return [f"[{item['title']}]({item['link']})" for item in results[:3]]
+
+# Streamlit UI setup
+st.title("💬 Debate Chatbot")
 st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
+    "Enter your stance on a topic, and I'll present a counterargument."
 )
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
+# Ask for Gemini API Key
+gemini_api_key = st.text_input("Gemini API Key", type="password")
+
+if not gemini_api_key:
+    st.info("Please add your Gemini API key to continue.", icon="🗝️")
 else:
+    # Use Gemini API instead of OpenAI
+    client = OpenAI(
+        api_key=gemini_api_key,
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
-
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
+    # Initialize session state for chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display the existing chat messages via `st.chat_message`.
+    # Display past chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+    # Ask for user's stance
+    stance = st.chat_input("Enter your stance on a topic:")
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    if stance:
+        # Store and display the user's input
+        st.session_state.messages.append({"role": "user", "content": stance})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(stance)
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+        # Generate a counterargument using Gemini
+        response = client.chat.completions.create(
+            model="gemini-2.0-flash",
+            n=1,
             messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
+                {"role": "system", "content": "You are a debate assistant. Always provide a well-reasoned counterargument."},
+                {"role": "user", "content": f"My stance: {stance}. Provide a counterargument."}
+            ]
         )
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
+        # Extract response correctly (fixing the 'ChatCompletionMessage' error)
+        counterargument = response.choices[0].message.content  
+
+        # Display the AI's response
         with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+            st.markdown(counterargument)
+
+        # Store response in session state
+        st.session_state.messages.append({"role": "assistant", "content": counterargument})
+
+        # Find supporting articles
+        articles = get_supporting_articles(f"counterargument to {stance}")
+        if articles:
+            st.write("Here are some supporting articles:")
+            for article in articles:
+                st.markdown(article)
